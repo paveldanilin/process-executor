@@ -1,0 +1,26 @@
+{
+    "name": "paveldanilin/process-executor",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Pavel",
+            "email": "pavel.k.danilin@gmail.com"
+        }
+    ],
+    "require": {
+        "php":  "^7.4",
+        "react/event-loop": "^1.2",
+        "react/promise": "^v2.8.0",
+        "opis/closure": "^3.6",
+        "symfony/process": "^5.3"
+    },
+    "require-dev": {
+        "guzzlehttp/guzzle": "^7.0",
+        "doctrine/dbal": "^3.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Paveldanilin\\ProcessExecutor\\": "src"
+        }
+    }
+}
