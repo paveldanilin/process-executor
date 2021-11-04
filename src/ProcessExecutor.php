@@ -7,24 +7,27 @@ use Paveldanilin\ProcessExecutor\Exception\ProcessExecutionException;
 use Paveldanilin\ProcessExecutor\Exception\RejectedExecutionException;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\PhpProcess;
 use Symfony\Component\Process\Process;
 
 class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorServiceInterface
 {
-    private static int $DEFAULT_MAX_POOL_SIZE = 15;
+    private const DEFAULT_MAX_POOL_SIZE = 15;
 
     /** @var array<Process>  */
     private array $pool;
     private string $vendorDir;
     private int $maxPoolSize;
     private ?TaskQueueInterface $queue;
+    private ?RejectedExecutionHandlerInterface $rejectedExecutionHandler;
 
-    public function __construct(int $maxPoolSize = 0, ?TaskQueueInterface $queue = null)
+    public function __construct(int $maxPoolSize = 0, ?TaskQueueInterface $queue = null, ?RejectedExecutionHandlerInterface $rejectedExecutionHandler = null)
     {
         $this->maxPoolSize = $this->filterMaxPoolSize($maxPoolSize);
         $this->vendorDir = '';
         $this->queue = $queue;
+        $this->rejectedExecutionHandler = $rejectedExecutionHandler;
         $this->pool = [];
         for ($i = 0; $i < $this->maxPoolSize; $i++) {
             $this->pool[$i] = new Process([]);
@@ -36,7 +39,9 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
             if (null === $this->queue) {
-                throw new RejectedExecutionException('No free executors');
+                if (null === $this->rejectedExecutionHandler) {
+                    throw new RejectedExecutionException('A task cannot be accepted for execution');
+                }
             } else {
                 $this->queue->enqueue(new Task($task, $timeout, null));
                 return;
@@ -56,7 +61,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
             if (null === $this->queue) {
-                throw new RejectedExecutionException('No free executors');
+                throw new RejectedExecutionException('A task cannot be accepted for execution');
             } else {
                 $this->queue->enqueue(new Task($task, $timeout, $deferred));
                 return $deferred->promise();
@@ -93,7 +98,11 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     {
         foreach ($this->pool as $proc) {
             if ($proc->isRunning()) {
-                $proc->checkTimeout();
+                try {
+                    $proc->checkTimeout();
+                } catch (ProcessTimedOutException $exception) {
+                    $proc->stop();
+                }
             }
         }
     }
@@ -183,10 +192,10 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private function filterMaxPoolSize(int $concurrency): int
     {
         if ($concurrency <= 0) {
-            return self::$DEFAULT_MAX_POOL_SIZE;
+            return self::DEFAULT_MAX_POOL_SIZE;
         }
-        if ($concurrency > self::$DEFAULT_MAX_POOL_SIZE) {
-            return self::$DEFAULT_MAX_POOL_SIZE;
+        if ($concurrency > self::DEFAULT_MAX_POOL_SIZE) {
+            return self::DEFAULT_MAX_POOL_SIZE;
         }
         return $concurrency;
     }
