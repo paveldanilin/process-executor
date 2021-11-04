@@ -9,6 +9,7 @@
     ],
     "require": {
         "php":  "^7.4",
+        "ext-pcntl": "*",
         "react/event-loop": "^1.2",
         "react/promise": "^v2.8.0",
         "opis/closure": "^3.6",
