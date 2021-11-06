@@ -1,9 +1,6 @@
 <?php
 
-namespace Paveldanilin\ProcessExecutor\Exception;
-
-use Paveldanilin\ProcessExecutor\Task;
-use Paveldanilin\ProcessExecutor\TaskQueueInterface;
+namespace Paveldanilin\ProcessExecutor\Queue;
 
 final class TaskQueue implements TaskQueueInterface
 {
