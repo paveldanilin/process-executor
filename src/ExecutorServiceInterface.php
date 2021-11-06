@@ -9,4 +9,5 @@ interface ExecutorServiceInterface extends ExecutorInterface
     public function submit(\Closure $task, ?float $timeout = null): PromiseInterface;
     public function getPoolSize(): int;
     public function getMaxPoolSize(): int;
+    public function waitAll(): void;
 }

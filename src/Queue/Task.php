@@ -1,6 +1,6 @@
 <?php
 
-namespace Paveldanilin\ProcessExecutor;
+namespace Paveldanilin\ProcessExecutor\Queue;
 
 use React\Promise\Deferred;
 

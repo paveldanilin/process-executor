@@ -5,6 +5,8 @@ namespace Paveldanilin\ProcessExecutor;
 use Opis\Closure\SerializableClosure;
 use Paveldanilin\ProcessExecutor\Exception\ProcessExecutionException;
 use Paveldanilin\ProcessExecutor\Exception\RejectedExecutionException;
+use Paveldanilin\ProcessExecutor\Queue\Task;
+use Paveldanilin\ProcessExecutor\Queue\TaskQueueInterface;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
@@ -13,7 +15,8 @@ use Symfony\Component\Process\Process;
 
 class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorServiceInterface
 {
-    private const DEFAULT_MAX_POOL_SIZE = 15;
+    private const MAX_CONCURRENCY = 50;
+    private const DEFAULT_MAX_POOL_SIZE = 4;
 
     /** @var array<Process>  */
     private array $pool;
@@ -41,6 +44,8 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
             if (null === $this->queue) {
                 if (null === $this->rejectedExecutionHandler) {
                     throw new RejectedExecutionException('A task cannot be accepted for execution');
+                } else {
+                    $this->rejectedExecutionHandler->rejectedExecution($task, $this);
                 }
             } else {
                 $this->queue->enqueue(new Task($task, $timeout, null));
@@ -50,7 +55,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
 
         $this->pool[$freePID] = new PhpProcess($this->buildScript($task));
         $this->pool[$freePID]->setTimeout($timeout);
-        $this->pool[$freePID]->start(function ($t, $d) {
+        $this->pool[$freePID]->start(function () {
             $this->processQueue();
         });
     }
@@ -81,6 +86,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
                     $deferred->resolve($data);
                 }
             }
+            $this->processQueue();
         });
         return $deferred->promise();
     }
@@ -102,6 +108,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
                     $proc->checkTimeout();
                 } catch (ProcessTimedOutException $exception) {
                     $proc->stop();
+                    //throw $exception;
                 }
             }
         }
@@ -128,9 +135,20 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         return $this->queue;
     }
 
+    public function waitAll(): void
+    {
+        for (;;) {
+            $this->checkTimeout();
+            $emptyQueue = null === $this->queue || 0 === $this->queue->getSize();
+            if ($emptyQueue && 0 === $this->getPoolSize()) {
+                return;
+            }
+        }
+    }
+
     private function processQueue(): void
     {
-        if (null === $this->queue ||  0 === $this->queue->getSize()) {
+        if (null === $this->queue || 0 === $this->queue->getSize()) {
             return;
         }
 
@@ -194,7 +212,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         if ($concurrency <= 0) {
             return self::DEFAULT_MAX_POOL_SIZE;
         }
-        if ($concurrency > self::DEFAULT_MAX_POOL_SIZE) {
+        if ($concurrency > self::MAX_CONCURRENCY) {
             return self::DEFAULT_MAX_POOL_SIZE;
         }
         return $concurrency;

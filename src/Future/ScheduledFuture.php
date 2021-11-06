@@ -1,8 +1,7 @@
 <?php
 
-namespace Paveldanilin\ProcessExecutor;
+namespace Paveldanilin\ProcessExecutor\Future;
 
-use React\EventLoop\TimerInterface;
 
 final class ScheduledFuture implements ScheduledFutureInterface
 {

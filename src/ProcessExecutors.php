@@ -2,7 +2,10 @@
 
 namespace Paveldanilin\ProcessExecutor;
 
+use Paveldanilin\ProcessExecutor\Queue\FixedTaskQueue;
 use React\EventLoop\Loop;
+
+Loop::stop();
 
 if (\function_exists('pcntl_signal')) {
     $signalHandler = static function ($signal) {
@@ -18,6 +21,7 @@ if (\function_exists('pcntl_signal')) {
 abstract class ProcessExecutors
 {
     private static bool $scheduleTimeoutChecked = false;
+    /** @var array<ExecutorServiceInterface> */
     private static array $executors = [];
 
     public static function newSingleExecutor(): ExecutorInterface
@@ -36,16 +40,24 @@ abstract class ProcessExecutors
         return $executor;
     }
 
-    public static function newQueuedPoolExecutor(int $maxPoolSize, TaskQueueInterface $queue): ExecutorServiceInterface
+    public static function newQueuedPoolExecutor(int $maxPoolSize, int $queueSize = 0): ExecutorServiceInterface
     {
+        $queue = null;
+        if ($queueSize > 0) {
+            $queue = new FixedTaskQueue($queueSize);
+        }
         $executor = new ProcessExecutor($maxPoolSize, $queue);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
         return $executor;
     }
 
-    public static function newScheduledPoolExecutor(int $maxPoolSize, ?TaskQueueInterface $queue): ScheduledExecutorServiceInterface
+    public static function newScheduledPoolExecutor(int $maxPoolSize, int $queueSize = 0): ScheduledExecutorServiceInterface
     {
+        $queue = null;
+        if ($queueSize > 0) {
+            $queue = new FixedTaskQueue($queueSize);
+        }
         $executor = new ScheduledProcessExecutor($maxPoolSize, $queue);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
