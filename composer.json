@@ -13,7 +13,8 @@
         "react/event-loop": "^1.2",
         "react/promise": "^v2.8.0",
         "opis/closure": "^3.6",
-        "symfony/process": "^5.3"
+        "symfony/process": "^5.3",
+        "dragonmantank/cron-expression": "^3.1"
     },
     "require-dev": {
         "guzzlehttp/guzzle": "^7.0",
