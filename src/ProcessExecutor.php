@@ -5,9 +5,12 @@ namespace Paveldanilin\ProcessExecutor;
 use Opis\Closure\SerializableClosure;
 use Paveldanilin\ProcessExecutor\Exception\ProcessExecutionException;
 use Paveldanilin\ProcessExecutor\Exception\RejectedExecutionException;
+use Paveldanilin\ProcessExecutor\Log\LoggerInterface;
+use Paveldanilin\ProcessExecutor\Log\NullLogger;
 use Paveldanilin\ProcessExecutor\Queue\Task;
 use Paveldanilin\ProcessExecutor\Queue\TaskQueueInterface;
 use React\Promise\Deferred;
+use React\Promise\FulfilledPromise;
 use React\Promise\PromiseInterface;
 use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\PhpProcess;
@@ -16,7 +19,7 @@ use Symfony\Component\Process\Process;
 class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorServiceInterface
 {
     private const MAX_CONCURRENCY = 50;
-    private const DEFAULT_MAX_POOL_SIZE = 4;
+    private const DEFAULT_POOL_SIZE = 4;
 
     /** @var array<Process>  */
     private array $pool;
@@ -24,13 +27,18 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private int $maxPoolSize;
     private ?TaskQueueInterface $queue;
     private ?RejectedExecutionHandlerInterface $rejectedExecutionHandler;
+    protected LoggerInterface $logger;
 
-    public function __construct(int $maxPoolSize = 0, ?TaskQueueInterface $queue = null, ?RejectedExecutionHandlerInterface $rejectedExecutionHandler = null)
+    public function __construct(int $maxPoolSize = 0,
+                                ?TaskQueueInterface $queue = null,
+                                ?RejectedExecutionHandlerInterface $rejectedExecutionHandler = null,
+                                ?LoggerInterface $logger = null)
     {
         $this->maxPoolSize = $this->filterMaxPoolSize($maxPoolSize);
         $this->vendorDir = '';
         $this->queue = $queue;
         $this->rejectedExecutionHandler = $rejectedExecutionHandler;
+        $this->logger = $logger ?? new NullLogger();
         $this->pool = [];
         for ($i = 0; $i < $this->maxPoolSize; $i++) {
             $this->pool[$i] = new Process([]);
@@ -41,23 +49,11 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     {
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
-            if (null === $this->queue) {
-                if (null === $this->rejectedExecutionHandler) {
-                    throw new RejectedExecutionException('A task cannot be accepted for execution');
-                } else {
-                    $this->rejectedExecutionHandler->rejectedExecution($task, $this);
-                }
-            } else {
-                $this->queue->enqueue(new Task($task, $timeout, null));
-                return;
-            }
+            $this->executeNoProcessHandler($task, $timeout);
+            return;
         }
 
-        $this->pool[$freePID] = new PhpProcess($this->buildScript($task));
-        $this->pool[$freePID]->setTimeout($timeout);
-        $this->pool[$freePID]->start(function () {
-            $this->processQueue();
-        });
+        $this->startChildProcess($freePID, $task, $timeout);
     }
 
     public function submit(\Closure $task, ?float $timeout = null): PromiseInterface
@@ -65,29 +61,11 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $deferred = new Deferred();
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
-            if (null === $this->queue) {
-                throw new RejectedExecutionException('A task cannot be accepted for execution');
-            } else {
-                $this->queue->enqueue(new Task($task, $timeout, $deferred));
-                return $deferred->promise();
-            }
+            return $this->submitNoProcessHandler($task, $timeout, $deferred);
         }
 
-        $this->pool[$freePID] = new PhpProcess($this->buildScriptWithReturn($task));
-        $this->pool[$freePID]->setTimeout($timeout);
-        $this->pool[$freePID]->start(function ($type, $buffer) use($deferred) {
-            if (Process::ERR === $type) {
-                $deferred->reject(new ProcessExecutionException($buffer));
-            } else {
-                $data = \unserialize(\base64_decode($buffer), ['allowed_classes' => true]);
-                if ($data instanceof \Throwable) {
-                    $deferred->reject($data);
-                } else {
-                    $deferred->resolve($data);
-                }
-            }
-            $this->processQueue();
-        });
+        $this->startChildProcessWithDeferred($freePID, $task, $timeout, $deferred);
+
         return $deferred->promise();
     }
 
@@ -149,38 +127,37 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private function processQueue(): void
     {
         if (null === $this->queue || 0 === $this->queue->getSize()) {
+            $this->logger->info('The queue is empty, nothing to execute', ['method' => $this->getMethodName(__METHOD__)]);
             return;
         }
 
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
+            $this->logger->warning('Can not process a queue since the pool is busy', ['method' => $this->getMethodName(__METHOD__)]);
             return;
         }
 
         /** @var Task|null $task */
         $task = $this->queue->dequeue();
         if (null === $task) {
+            $this->logger->warning('Dequeued an empty task, nothing to execute', ['method' => $this->getMethodName(__METHOD__)]);
             return;
         }
 
-        $script = $task->isDeferred() ? $this->buildScriptWithReturn($task->getClosure()) : $this->buildScript($task->getClosure());
-        $this->pool[$freePID] = new PhpProcess($script);
-        $this->pool[$freePID]->setTimeout($task->getTimeout());
-        $this->pool[$freePID]->start(function ($type, $rawData) use($task) {
-            if ($task->isDeferred()) {
-                if (Process::ERR === $type) {
-                    $task->getDeferred()->reject(new ProcessExecutionException($rawData));
-                } else {
-                    $data = \unserialize(\base64_decode($rawData), ['allowed_classes' => true]);
-                    if ($data instanceof \Throwable) {
-                        $task->getDeferred()->reject($data);
-                    } else {
-                        $task->getDeferred()->resolve($data);
-                    }
-                }
-            }
-            $this->processQueue();
-        });
+        if ($task->isDeferred()) {
+            $this->startChildProcessWithDeferred(
+                $freePID,
+                $task->getClosure(),
+                $task->getTimeout(),
+                $task->getDeferred()
+            );
+        } else {
+            $this->startChildProcess(
+                $freePID,
+                $task->getClosure(),
+                $task->getTimeout()
+            );
+        }
     }
 
     private function getFreeProcess(): ?int
@@ -210,10 +187,10 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private function filterMaxPoolSize(int $concurrency): int
     {
         if ($concurrency <= 0) {
-            return self::DEFAULT_MAX_POOL_SIZE;
+            return self::DEFAULT_POOL_SIZE;
         }
         if ($concurrency > self::MAX_CONCURRENCY) {
-            return self::DEFAULT_MAX_POOL_SIZE;
+            return self::MAX_CONCURRENCY;
         }
         return $concurrency;
     }
@@ -256,5 +233,115 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         }
         exit(0);
 ?>';
+    }
+
+    private function startChildProcess(int $pid, \Closure $task, ?float $timeout): void
+    {
+        $method = __METHOD__;
+        $this->logger->info('[proc-{pid}] Going to start a child process  timeout={timeout},method={method}', [
+            'pid' => $pid,
+            'timeout' => $timeout,
+            'method' => $this->getMethodName($this->getMethodName($method)),
+        ]);
+
+        $this->pool[$pid] = new PhpProcess($this->buildScript($task));
+        $this->pool[$pid]->setTimeout($timeout);
+        $this->pool[$pid]->start(function () use($pid, $method) {
+            $this->logger->info('[proc-{pid}] A child process is finished  method={method}', [
+                'pid' => $pid,
+                'method' => $this->getMethodName($method),
+            ]);
+            $this->processQueue();
+        });
+    }
+
+    private function startChildProcessWithDeferred(int $pid, \Closure $task, ?float $timeout, Deferred $deferred): void
+    {
+        $method = __METHOD__;
+        $this->logger->info('[proc-{pid}] Going to start a child process  timeout={timeout},method={method}', [
+            'pid' => $pid,
+            'timeout' => $timeout,
+            'method' => $this->getMethodName($method),
+        ]);
+
+        $this->pool[$pid] = new PhpProcess($this->buildScriptWithReturn($task));
+        $this->pool[$pid]->setTimeout($timeout);
+        $this->pool[$pid]->start(function ($type, $buffer) use($deferred, $pid, $method) {
+            if (Process::ERR === $type) {
+                $this->logger->error('[proc-{pid}] A child process is failed  method={method},buffer={buffer}', [
+                    'pid' => $pid,
+                    'method' => $this->getMethodName($method),
+                    'buffer' => $buffer,
+                ]);
+                $deferred->reject(new ProcessExecutionException($buffer));
+            } else {
+                $data = \unserialize(\base64_decode($buffer), ['allowed_classes' => true]);
+                if ($data instanceof \Throwable) {
+                    $this->logger->warning('[proc-{pid}] A child process is failed with an exception  method={method},exception={exception}', [
+                        'pid' => $pid,
+                        'method' => $this->getMethodName($method),
+                        'exception' => $data->getMessage(),
+                    ]);
+                    $deferred->reject($data);
+                } else {
+                    $this->logger->info('[proc-{pid}] A child process is finished with a result  method={method}', [
+                        'pid' => $pid,
+                        'method' => $this->getMethodName($method),
+                    ]);
+                    $deferred->resolve($data);
+                }
+            }
+            $this->processQueue();
+        });
+    }
+
+    private function executeNoProcessHandler(\Closure $task, ?float $timeout): void
+    {
+        if (null === $this->queue) {
+            if (null === $this->rejectedExecutionHandler) {
+                $this->logger->critical('A task cannot be accepted for execution', ['method' => $this->getMethodName(__METHOD__)]);
+                throw new RejectedExecutionException('A task cannot be accepted for execution');
+            }
+            $this->logger->warning('Going to call the rejected execution handler', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->rejectedExecutionHandler->rejectedExecution($task, $this);
+            return;
+        }
+
+        try {
+            $this->queue->enqueue(new Task($task, $timeout, null));
+            $this->logger->info('A task has been enqueued at position [' . ($this->queue->getSize() - 1) . ']', ['method' => $this->getMethodName(__METHOD__)]);
+        } catch (\OverflowException $exception) {
+            $this->logger->critical('Could not enqueue a task: the queue is full', ['method' => $this->getMethodName(__METHOD__)]);
+            throw $exception;
+        }
+    }
+
+    private function submitNoProcessHandler(\Closure $task, ?float $timeout, Deferred $deferred): PromiseInterface
+    {
+        if (null === $this->queue) {
+            if (null === $this->rejectedExecutionHandler) {
+                $this->logger->critical('A task cannot be accepted for execution', ['method' => $this->getMethodName(__METHOD__)]);
+                throw new RejectedExecutionException('A task cannot be accepted for execution');
+            }
+            $this->logger->warning('Going to call the rejected execution handler', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->rejectedExecutionHandler->rejectedExecution($task, $this);
+            return new FulfilledPromise();
+        }
+
+        try {
+            $this->queue->enqueue(new Task($task, $timeout, $deferred));
+            $this->logger->info('A task has been enqueued at position [' . ($this->queue->getSize() - 1) . ']', ['method' => $this->getMethodName(__METHOD__)]);
+        } catch (\OverflowException $exception) {
+            $this->logger->critical('Could not enqueue a task: the queue is full', ['method' => $this->getMethodName(__METHOD__)]);
+            throw $exception;
+        }
+
+        return $deferred->promise();
+    }
+
+    private function getMethodName(string $method): string
+    {
+        $parts = \explode('\\', $method);
+        return \end($parts);
     }
 }
