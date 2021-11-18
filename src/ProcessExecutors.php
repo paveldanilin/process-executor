@@ -2,6 +2,9 @@
 
 namespace Paveldanilin\ProcessExecutor;
 
+use Paveldanilin\ProcessExecutor\Log\Logger;
+use Paveldanilin\ProcessExecutor\Log\LoggerInterface;
+use Paveldanilin\ProcessExecutor\Log\NullLogger;
 use Paveldanilin\ProcessExecutor\Queue\FixedTaskQueue;
 use React\EventLoop\Loop;
 
@@ -23,10 +26,16 @@ abstract class ProcessExecutors
     private static bool $scheduleTimeoutChecked = false;
     /** @var array<ExecutorServiceInterface> */
     private static array $executors = [];
+    private static ?LoggerInterface $logger = null;
+
+    public static function setLogger(LoggerInterface $logger): void
+    {
+        self::$logger = $logger;
+    }
 
     public static function newSingleExecutor(): ExecutorInterface
     {
-        $executor = new ProcessExecutor(1, null);
+        $executor = new ProcessExecutor(1, null, null, self::$logger);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
         return $executor;
@@ -34,7 +43,7 @@ abstract class ProcessExecutors
 
     public static function newFixedPoolExecutor(int $maxPoolSize): ExecutorServiceInterface
     {
-        $executor = new ProcessExecutor($maxPoolSize);
+        $executor = new ProcessExecutor($maxPoolSize, null, null, self::$logger);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
         return $executor;
@@ -46,7 +55,7 @@ abstract class ProcessExecutors
         if ($queueSize > 0) {
             $queue = new FixedTaskQueue($queueSize);
         }
-        $executor = new ProcessExecutor($maxPoolSize, $queue);
+        $executor = new ProcessExecutor($maxPoolSize, $queue, null, self::$logger);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
         return $executor;
@@ -58,7 +67,7 @@ abstract class ProcessExecutors
         if ($queueSize > 0) {
             $queue = new FixedTaskQueue($queueSize);
         }
-        $executor = new ScheduledProcessExecutor($maxPoolSize, $queue);
+        $executor = new ScheduledProcessExecutor($maxPoolSize, $queue, null, self::$logger);
         static::$executors[] = $executor;
         static::registerTimeoutChecker();
         return $executor;

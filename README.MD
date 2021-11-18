@@ -1,7 +1,9 @@
 # ProcessExecutor
 
-A ProcessExecutor allows you to execute the closure in the sub-process.
-Caveats: due to limitations of serialization it is not possible to use any PHP resource (e.g. file or db connection) inside the closure.
+ProcessExecutor allows you to execute the closure in the sub-process.
+
+Due to the limitations of the serialization process, it is not possible to pass any PHP resource to the closure.
+But we can overcome this drawback by opening a resource inside closure (e.g. open a db connection or file).
 
 Scheduled execution
 ```php

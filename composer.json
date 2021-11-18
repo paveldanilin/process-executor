@@ -1,6 +1,14 @@
 {
     "name": "paveldanilin/process-executor",
     "type": "library",
+    "description": "Execute scheduled jobs or tasks in parallel",
+    "keywords": [
+        "php",
+        "cron",
+        "scheduler",
+        "schedule",
+        "promise"
+    ],
     "authors": [
         {
             "name": "Pavel",
@@ -14,7 +22,9 @@
         "react/promise": "^v2.8.0",
         "opis/closure": "^3.6",
         "symfony/process": "^5.3",
-        "dragonmantank/cron-expression": "^3.1"
+        "dragonmantank/cron-expression": "^3.1",
+        "psr/log": "^1.1",
+        "react/stream": "^1.2"
     },
     "require-dev": {
         "guzzlehttp/guzzle": "^7.0",
