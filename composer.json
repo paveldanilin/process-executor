@@ -20,11 +20,11 @@
         "ext-pcntl": "*",
         "react/event-loop": "^1.2",
         "react/promise": "^v2.8.0",
+        "react/stream": "^1.2",
         "opis/closure": "^3.6",
-        "symfony/process": "^5.3",
+        "symfony/process": "^4.4|^5.3",
         "dragonmantank/cron-expression": "^3.1",
-        "psr/log": "^1.1",
-        "react/stream": "^1.2"
+        "psr/log": "^1.1"
     },
     "require-dev": {
         "guzzlehttp/guzzle": "^7.0",
