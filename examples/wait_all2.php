@@ -1,10 +1,11 @@
 <?php
 
+use Paveldanilin\ProcessExecutor\Log\StreamLogger;
 use Paveldanilin\ProcessExecutor\ProcessExecutors;
 
 require '../vendor/autoload.php';
 
-ProcessExecutors::setLogger((new \Paveldanilin\ProcessExecutor\Log\StreamLogger(STDOUT))->setLevel('debug'));
+ProcessExecutors::setLogger((new StreamLogger(STDOUT))->setLevel('debug'));
 
 $r = ProcessExecutors::waitAll([
     function () {
