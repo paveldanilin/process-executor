@@ -1,5 +1,7 @@
 <?php
 
+use Paveldanilin\ProcessExecutor\ProcessExecutors;
+
 require '../vendor/autoload.php';
 
 $dbConnectionString = 'sqlite:///./test.db';
@@ -24,7 +26,7 @@ if (!\file_exists('./test.db')) {
     print "The users table has been create\n";
 }
 
-$executor = \Paveldanilin\ProcessExecutor\ProcessExecutors::newScheduledPoolExecutor(4);
+$executor = ProcessExecutors::newScheduledPoolExecutor(4);
 
 // Create a new user every 5 seconds
 $executor->schedule(5, function () use($dbConnectionString) {

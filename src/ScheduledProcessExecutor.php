@@ -5,6 +5,7 @@ namespace Paveldanilin\ProcessExecutor;
 use Paveldanilin\ProcessExecutor\Future\ScheduledFuture;
 use Paveldanilin\ProcessExecutor\Future\ScheduledFutureInterface;
 use React\EventLoop\Loop;
+use React\EventLoop\TimerInterface;
 
 class ScheduledProcessExecutor extends ProcessExecutor implements ScheduledExecutorServiceInterface
 {
@@ -15,6 +16,7 @@ class ScheduledProcessExecutor extends ProcessExecutor implements ScheduledExecu
     private int $state = self::STATE_STOPPED;
     /** @var array<CronJob>  */
     private array $cronJobs = [];
+    private ?TimerInterface $cronTimer = null;
 
     public function cron(string $expression, \Closure $task, ?float $timeout = null): void
     {
@@ -46,7 +48,7 @@ class ScheduledProcessExecutor extends ProcessExecutor implements ScheduledExecu
             return;
         }
         $this->state = self::STATE_RUNNING;
-        $this->startCron();
+        $this->prepareCron();
         Loop::run();
     }
 
@@ -64,18 +66,20 @@ class ScheduledProcessExecutor extends ProcessExecutor implements ScheduledExecu
         throw new \RuntimeException('Not implemented');
     }
 
-    private function startCron(): void
+    private function prepareCron(): void
     {
         if (0 === \count($this->cronJobs)) {
             return;
         }
 
-        Loop::addPeriodicTimer(1, function () {
-            foreach ($this->cronJobs as $cronTask) {
-                if ($cronTask->isDue()) {
-                    $this->execute($cronTask->getTask(), $cronTask->getTimeout());
+        if (null === $this->cronTimer) {
+            $this->cronTimer = Loop::addPeriodicTimer(1, function () {
+                foreach ($this->cronJobs as $cronTask) {
+                    if ($cronTask->isDue()) {
+                        $this->execute($cronTask->getTask(), $cronTask->getTimeout());
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 }

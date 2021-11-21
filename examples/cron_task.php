@@ -1,12 +1,19 @@
 <?php
 
+use Paveldanilin\ProcessExecutor\Log\StreamLogger;
+use Paveldanilin\ProcessExecutor\ProcessExecutors;
+use Psr\Log\LogLevel;
+
 require '../vendor/autoload.php';
 
 
-\Paveldanilin\ProcessExecutor\ProcessExecutors::setLogger(new \Paveldanilin\ProcessExecutor\Log\Logger('./executor.log'));
-$executor = \Paveldanilin\ProcessExecutor\ProcessExecutors::newScheduledPoolExecutor(4);
+ProcessExecutors::setLogger(
+    (new StreamLogger(STDOUT))->setLevel(LogLevel::DEBUG)
+);
+$executor = ProcessExecutors::newScheduledPoolExecutor(4);
 
-// Run job hourly
+
+
 $executor->cron('* * * * *', function () {
     \file_put_contents('./cron.out', (new \DateTime())->format('H:i:s') . "\n", FILE_APPEND);
 });

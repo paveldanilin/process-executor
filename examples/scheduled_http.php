@@ -3,8 +3,9 @@
 require '../vendor/autoload.php';
 
 use GuzzleHttp\Client;
+use Paveldanilin\ProcessExecutor\ProcessExecutors;
 
-$executor = \Paveldanilin\ProcessExecutor\ProcessExecutors::newScheduledPoolExecutor(1);
+$executor = ProcessExecutors::newScheduledPoolExecutor(1);
 
 $client = new Client([
     'base_uri' => 'https://jsonplaceholder.typicode.com',

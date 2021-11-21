@@ -5,10 +5,12 @@ namespace Paveldanilin\ProcessExecutor;
 use Opis\Closure\SerializableClosure;
 use Paveldanilin\ProcessExecutor\Exception\ProcessExecutionException;
 use Paveldanilin\ProcessExecutor\Exception\RejectedExecutionException;
-use Paveldanilin\ProcessExecutor\Log\LoggerInterface;
+use Paveldanilin\ProcessExecutor\Log\AbstractLogger;
 use Paveldanilin\ProcessExecutor\Log\NullLogger;
 use Paveldanilin\ProcessExecutor\Queue\Task;
 use Paveldanilin\ProcessExecutor\Queue\TaskQueueInterface;
+use React\EventLoop\Loop;
+use React\EventLoop\TimerInterface;
 use React\Promise\Deferred;
 use React\Promise\FulfilledPromise;
 use React\Promise\PromiseInterface;
@@ -27,18 +29,19 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private int $maxPoolSize;
     private ?TaskQueueInterface $queue;
     private ?RejectedExecutionHandlerInterface $rejectedExecutionHandler;
-    protected LoggerInterface $logger;
+    private ?TimerInterface $waitTimer;
+    protected AbstractLogger $logger;
 
     public function __construct(int $maxPoolSize = 0,
                                 ?TaskQueueInterface $queue = null,
-                                ?RejectedExecutionHandlerInterface $rejectedExecutionHandler = null,
-                                ?LoggerInterface $logger = null)
+                                ?RejectedExecutionHandlerInterface $rejectedExecutionHandler = null)
     {
         $this->maxPoolSize = $this->filterMaxPoolSize($maxPoolSize);
         $this->vendorDir = '';
         $this->queue = $queue;
         $this->rejectedExecutionHandler = $rejectedExecutionHandler;
-        $this->logger = $logger ?? new NullLogger();
+        $this->logger = new NullLogger();
+        $this->waitTimer = null;
         $this->pool = [];
         for ($i = 0; $i < $this->maxPoolSize; $i++) {
             $this->pool[$i] = new Process([]);
@@ -67,6 +70,11 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $this->startChildProcessWithDeferred($freePID, $task, $timeout, $deferred);
 
         return $deferred->promise();
+    }
+
+    public function setLogger(?AbstractLogger $logger): void
+    {
+        $this->logger = $logger ?? new NullLogger();
     }
 
     public function shutdown(): void
@@ -115,32 +123,51 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
 
     public function waitAll(): void
     {
+        /*
         for (;;) {
             $this->checkTimeout();
             $emptyQueue = null === $this->queue || 0 === $this->queue->getSize();
             if ($emptyQueue && 0 === $this->getPoolSize()) {
                 return;
             }
-        }
+        }*/
+
+        $this->waitTimer = Loop::addPeriodicTimer(1, function () {
+            $this->checkTimeout();
+            $emptyQueue = null === $this->queue || 0 === $this->queue->getSize();
+            if ($emptyQueue && 0 === $this->getPoolSize()) {
+                Loop::stop();
+                Loop::cancelTimer($this->waitTimer);
+                $this->waitTimer = null;
+
+            }
+        });
+        Loop::run();
     }
 
     private function processQueue(): void
     {
         if (null === $this->queue || 0 === $this->queue->getSize()) {
-            $this->logger->info('The queue is empty, nothing to execute', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->info('The queue is empty, nothing to execute    m={method}', [
+                'method' => $this->getMethodName(__METHOD__)
+            ]);
             return;
         }
 
         $freePID = $this->getFreeProcess();
         if (null === $freePID) {
-            $this->logger->warning('Can not process a queue since the pool is busy', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->warning('Can not process a queue since the pool is busy    m={method}', [
+                'method' => $this->getMethodName(__METHOD__)
+            ]);
             return;
         }
 
         /** @var Task|null $task */
         $task = $this->queue->dequeue();
         if (null === $task) {
-            $this->logger->warning('Dequeued an empty task, nothing to execute', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->warning('Dequeued an empty task, nothing to execute    m={method}', [
+                'method' => $this->getMethodName(__METHOD__)
+            ]);
             return;
         }
 
@@ -238,7 +265,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private function startChildProcess(int $pid, \Closure $task, ?float $timeout): void
     {
         $method = __METHOD__;
-        $this->logger->info('[proc-{pid}] Going to start a child process  timeout={timeout},method={method}', [
+        $this->logger->info('[proc-{pid}] Going to start a child process    t={timeout},m={method}', [
             'pid' => $pid,
             'timeout' => $timeout,
             'method' => $this->getMethodName($this->getMethodName($method)),
@@ -247,7 +274,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $this->pool[$pid] = new PhpProcess($this->buildScript($task));
         $this->pool[$pid]->setTimeout($timeout);
         $this->pool[$pid]->start(function () use($pid, $method) {
-            $this->logger->info('[proc-{pid}] A child process is finished  method={method}', [
+            $this->logger->info('[proc-{pid}] A child process is finished    m={method}', [
                 'pid' => $pid,
                 'method' => $this->getMethodName($method),
             ]);
@@ -258,7 +285,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     private function startChildProcessWithDeferred(int $pid, \Closure $task, ?float $timeout, Deferred $deferred): void
     {
         $method = __METHOD__;
-        $this->logger->info('[proc-{pid}] Going to start a child process  timeout={timeout},method={method}', [
+        $this->logger->info('[proc-{pid}] Going to start a child process    t={timeout},m={method}', [
             'pid' => $pid,
             'timeout' => $timeout,
             'method' => $this->getMethodName($method),
@@ -268,7 +295,7 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
         $this->pool[$pid]->setTimeout($timeout);
         $this->pool[$pid]->start(function ($type, $buffer) use($deferred, $pid, $method) {
             if (Process::ERR === $type) {
-                $this->logger->error('[proc-{pid}] A child process is failed  method={method},buffer={buffer}', [
+                $this->logger->error('[proc-{pid}] A child process is failed    m={method},b={buffer}', [
                     'pid' => $pid,
                     'method' => $this->getMethodName($method),
                     'buffer' => $buffer,
@@ -277,17 +304,23 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
             } else {
                 $data = \unserialize(\base64_decode($buffer), ['allowed_classes' => true]);
                 if ($data instanceof \Throwable) {
-                    $this->logger->warning('[proc-{pid}] A child process is failed with an exception  method={method},exception={exception}', [
+                    $this->logger->warning('[proc-{pid}] A child process is failed with an exception    m={method},e={exception}', [
                         'pid' => $pid,
                         'method' => $this->getMethodName($method),
                         'exception' => $data->getMessage(),
                     ]);
                     $deferred->reject($data);
                 } else {
-                    $this->logger->info('[proc-{pid}] A child process is finished with a result  method={method}', [
+                    $this->logger->info('[proc-{pid}] A child process is finished with a result    m={method}', [
                         'pid' => $pid,
                         'method' => $this->getMethodName($method),
                     ]);
+                    $this->logger->debug('[proc-{pid}] A child process is finished with a result    m={method},r={result}', [
+                        'pid' => $pid,
+                        'method' => $this->getMethodName($method),
+                        'result' => $data,
+                    ]);
+
                     $deferred->resolve($data);
                 }
             }
@@ -299,19 +332,28 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     {
         if (null === $this->queue) {
             if (null === $this->rejectedExecutionHandler) {
-                $this->logger->critical('A task cannot be accepted for execution', ['method' => $this->getMethodName(__METHOD__)]);
+                $this->logger->critical('A task cannot be accepted for execution    m={method}', [
+                    'method' => $this->getMethodName(__METHOD__)
+                ]);
                 throw new RejectedExecutionException('A task cannot be accepted for execution');
             }
-            $this->logger->warning('Going to call the rejected execution handler', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->warning('Going to call the rejected execution handler    m={method}', [
+                'method' => $this->getMethodName(__METHOD__)
+            ]);
             $this->rejectedExecutionHandler->rejectedExecution($task, $this);
             return;
         }
 
         try {
             $this->queue->enqueue(new Task($task, $timeout, null));
-            $this->logger->info('A task has been enqueued at position [' . ($this->queue->getSize() - 1) . ']', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->info('A task has been enqueued at position [{task_pos}]    m={method}', [
+                'task_pos' => ($this->queue->getSize() - 1),
+                'method' => $this->getMethodName(__METHOD__),
+            ]);
         } catch (\OverflowException $exception) {
-            $this->logger->critical('Could not enqueue a task: the queue is full', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->critical('Could not enqueue a task: the queue is full    m={method}', [
+                'method' => $this->getMethodName(__METHOD__),
+            ]);
             throw $exception;
         }
     }
@@ -320,19 +362,28 @@ class ProcessExecutor implements ExecutorServiceInterface, QueuedExecutorService
     {
         if (null === $this->queue) {
             if (null === $this->rejectedExecutionHandler) {
-                $this->logger->critical('A task cannot be accepted for execution', ['method' => $this->getMethodName(__METHOD__)]);
+                $this->logger->critical('A task cannot be accepted for execution    m={method}', [
+                    'method' => $this->getMethodName(__METHOD__),
+                ]);
                 throw new RejectedExecutionException('A task cannot be accepted for execution');
             }
-            $this->logger->warning('Going to call the rejected execution handler', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->warning('Going to call the rejected execution handler    m={method}', [
+                'method' => $this->getMethodName(__METHOD__)
+            ]);
             $this->rejectedExecutionHandler->rejectedExecution($task, $this);
             return new FulfilledPromise();
         }
 
         try {
             $this->queue->enqueue(new Task($task, $timeout, $deferred));
-            $this->logger->info('A task has been enqueued at position [' . ($this->queue->getSize() - 1) . ']', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->info('A task has been enqueued at position [{task_pos}]    m={method}', [
+                'task_pos' => ($this->queue->getSize() - 1),
+                'method' => $this->getMethodName(__METHOD__),
+            ]);
         } catch (\OverflowException $exception) {
-            $this->logger->critical('Could not enqueue a task: the queue is full', ['method' => $this->getMethodName(__METHOD__)]);
+            $this->logger->critical('Could not enqueue a task: the queue is full    m={method}', [
+                'method' => $this->getMethodName(__METHOD__),
+            ]);
             throw $exception;
         }
 

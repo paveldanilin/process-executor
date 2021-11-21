@@ -4,6 +4,8 @@ use Paveldanilin\ProcessExecutor\ProcessExecutors;
 
 require '../vendor/autoload.php';
 
+ProcessExecutors::setLogger((new \Paveldanilin\ProcessExecutor\Log\StreamLogger(STDOUT))->setLevel('debug'));
+
 $executor = ProcessExecutors::newFixedPoolExecutor(5);
 
 $executor->submit(function () {
