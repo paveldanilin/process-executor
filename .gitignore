@@ -3,3 +3,4 @@ vendor/
 *.db
 *.out
 *.log
+composer.lock
